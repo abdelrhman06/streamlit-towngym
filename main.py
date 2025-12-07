@@ -27,7 +27,15 @@ SERVICE_ACCOUNT_FILE = "creds.json"  # ملف الـ Service Account
 @st.cache_resource
 def get_gsheet_client():
     scope = ['https://www.googleapis.com/auth/spreadsheets']
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scope)
+
+    # Try to load from Streamlit secrets first (for cloud deployment)
+    try:
+        creds_dict = dict(st.secrets["gsheet_credentials"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    except:
+        # Fallback to local file (for local development)
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scope)
+
     client = gspread.authorize(creds)
     return client
 
