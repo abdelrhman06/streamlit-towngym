@@ -3,6 +3,9 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
+import time
+import hashlib
+import re
 
 # =========================
 # CONFIG
@@ -11,11 +14,17 @@ from datetime import datetime, date
 SPREADSHEET_ID = '1bJAoyCIjb387jOPVA4cUS6R8YTHdFZE0xpONJiQKC7s'
 WORKSHEET_NAME = "Leads"
 
-# يفضل تحط الباسورد في st.secrets
+# Admin password (MUST be changed in Streamlit secrets for production)
 try:
     ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
 except:
-    ADMIN_PASSWORD = "towngym2025"
+    ADMIN_PASSWORD = "towngym2025"  # Default - CHANGE THIS!
+
+# Session timeout (in seconds)
+SESSION_TIMEOUT = 3600  # 1 hour
+
+# Rate limiting
+MAX_SUBMISSIONS_PER_HOUR = 10  # Maximum form submissions per hour from same user
 
 SERVICE_ACCOUNT_FILE = "creds.json"  # ملف الـ Service Account
 
@@ -79,6 +88,59 @@ def load_data_as_df():
 
 
 # =========================
+# SECURITY HELPERS
+# =========================
+
+def sanitize_input(text):
+    """Sanitize user input to prevent injection attacks"""
+    if not text:
+        return ""
+    # Remove any potential HTML/script tags
+    text = re.sub(r'<[^>]*>', '', str(text))
+    # Remove special characters that could be used for injection
+    text = re.sub(r'[<>\"\'%;()&+]', '', str(text))
+    return text.strip()
+
+def validate_email(email):
+    """Validate email format"""
+    if not email:
+        return True  # Email is optional
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def validate_url(url):
+    """Validate URL format"""
+    if not url:
+        return True  # URL is optional
+    pattern = r'^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$'
+    return re.match(pattern, url) is not None
+
+def check_rate_limit():
+    """Check if user has exceeded submission rate limit"""
+    if 'submission_times' not in st.session_state:
+        st.session_state.submission_times = []
+
+    # Remove submissions older than 1 hour
+    current_time = time.time()
+    st.session_state.submission_times = [
+        t for t in st.session_state.submission_times
+        if current_time - t < 3600
+    ]
+
+    # Check if limit exceeded
+    if len(st.session_state.submission_times) >= MAX_SUBMISSIONS_PER_HOUR:
+        return False
+
+    return True
+
+def record_submission():
+    """Record a new submission timestamp"""
+    if 'submission_times' not in st.session_state:
+        st.session_state.submission_times = []
+    st.session_state.submission_times.append(time.time())
+
+
+# =========================
 # UI HELPERS
 # =========================
 
@@ -110,42 +172,61 @@ def show_lead_form():
         submitted = st.form_submit_button("✅ Submit Lead", use_container_width=True, type="primary")
 
         if submitted:
+            # Check rate limit
+            if not check_rate_limit():
+                st.error("⏰ Too many submissions. Please wait before submitting again (max 10 per hour).")
+                st.stop()
+
             # Validation
             errors = []
+
+            # Required fields
             if not company_name.strip():
                 errors.append("Company Name is required")
             if not hr_contact_name.strip():
                 errors.append("HR/Contact Name is required")
 
+            # Validate LinkedIn URL if provided
+            if linkedin_link and not validate_url(linkedin_link):
+                errors.append("Invalid LinkedIn URL format")
+
+            # Length validation
+            if len(company_name) > 200:
+                errors.append("Company Name is too long (max 200 characters)")
+            if len(notes) > 1000:
+                errors.append("Notes are too long (max 1000 characters)")
+
             if errors:
                 for error in errors:
                     st.error(f"❌ {error}")
             else:
+                # Sanitize all inputs
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 row = [
-                    timestamp,              # Timestamp
-                    company_name,           # Company Name
-                    industry,               # Industry
-                    size,                   # Size
-                    location,               # Location
-                    hr_contact_name,        # HR/Contact Name
-                    role,                   # Role
-                    linkedin_link,          # LinkedIn Link
-                    interest_level,         # Interest Level
-                    notes                   # Notes
+                    timestamp,                          # Timestamp
+                    sanitize_input(company_name),       # Company Name
+                    sanitize_input(industry),           # Industry
+                    sanitize_input(size),               # Size
+                    sanitize_input(location),           # Location
+                    sanitize_input(hr_contact_name),    # HR/Contact Name
+                    sanitize_input(role),               # Role
+                    linkedin_link.strip() if linkedin_link else "",  # LinkedIn Link
+                    interest_level,                     # Interest Level
+                    sanitize_input(notes)               # Notes
                 ]
                 try:
                     append_lead_row(row)
+                    record_submission()  # Record this submission
                     st.success("✅ Lead successfully submitted to Google Sheets!")
                     st.balloons()
 
                     # Show summary
                     with st.expander("📊 View Submission Summary"):
-                        st.write(f"**Company:** {company_name}")
-                        st.write(f"**Industry:** {industry}")
-                        st.write(f"**Size:** {size}")
-                        st.write(f"**Location:** {location}")
-                        st.write(f"**HR/Contact:** {hr_contact_name} ({role})")
+                        st.write(f"**Company:** {sanitize_input(company_name)}")
+                        st.write(f"**Industry:** {sanitize_input(industry)}")
+                        st.write(f"**Size:** {sanitize_input(size)}")
+                        st.write(f"**Location:** {sanitize_input(location)}")
+                        st.write(f"**HR/Contact:** {sanitize_input(hr_contact_name)} ({sanitize_input(role)})")
                         st.write(f"**Interest Level:** {interest_level}")
                         st.write(f"**Timestamp:** {timestamp}")
                 except Exception as e:
@@ -394,21 +475,62 @@ def show_admin_dashboard():
 
 def admin_login():
     st.sidebar.subheader("Admin Login")
+
+    # Initialize session state
     if "is_admin" not in st.session_state:
         st.session_state["is_admin"] = False
+    if "login_time" not in st.session_state:
+        st.session_state["login_time"] = None
+    if "failed_attempts" not in st.session_state:
+        st.session_state["failed_attempts"] = 0
+    if "lockout_time" not in st.session_state:
+        st.session_state["lockout_time"] = None
+
+    # Check session timeout
+    if st.session_state["is_admin"] and st.session_state["login_time"]:
+        if time.time() - st.session_state["login_time"] > SESSION_TIMEOUT:
+            st.session_state["is_admin"] = False
+            st.session_state["login_time"] = None
+            st.sidebar.warning("⏰ Session expired. Please login again.")
+
+    # Check lockout (5 failed attempts = 15 min lockout)
+    if st.session_state["lockout_time"]:
+        if time.time() - st.session_state["lockout_time"] < 900:  # 15 minutes
+            remaining = int(900 - (time.time() - st.session_state["lockout_time"]))
+            st.sidebar.error(f"🔒 Too many failed attempts. Try again in {remaining // 60} minutes.")
+            return
+        else:
+            st.session_state["lockout_time"] = None
+            st.session_state["failed_attempts"] = 0
 
     if not st.session_state["is_admin"]:
         password = st.sidebar.text_input("Password", type="password")
         if st.sidebar.button("Login"):
             if password == ADMIN_PASSWORD:
                 st.session_state["is_admin"] = True
+                st.session_state["login_time"] = time.time()
+                st.session_state["failed_attempts"] = 0
                 st.sidebar.success("Logged in as admin ✅")
+                st.rerun()
             else:
-                st.sidebar.error("Wrong password ❌")
+                st.session_state["failed_attempts"] += 1
+                if st.session_state["failed_attempts"] >= 5:
+                    st.session_state["lockout_time"] = time.time()
+                    st.sidebar.error("🔒 Too many failed attempts. Locked for 15 minutes.")
+                else:
+                    remaining = 5 - st.session_state["failed_attempts"]
+                    st.sidebar.error(f"❌ Wrong password ({remaining} attempts remaining)")
     else:
         st.sidebar.success("Admin mode active")
+        # Show session time remaining
+        if st.session_state["login_time"]:
+            time_remaining = SESSION_TIMEOUT - (time.time() - st.session_state["login_time"])
+            st.sidebar.caption(f"⏱️ Session: {int(time_remaining // 60)} min remaining")
+
         if st.sidebar.button("Logout"):
             st.session_state["is_admin"] = False
+            st.session_state["login_time"] = None
+            st.rerun()
 
 
 # =========================

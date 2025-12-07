@@ -1,6 +1,17 @@
-# Google Service Account Credentials
+# CRITICAL: Google Service Account Credentials
 creds.json
-*.json
+*-credentials.json
+service-account*.json
+gcp-*.json
+
+# Environment Variables & Secrets
+.env
+.env.*
+secrets.toml
+.streamlit/secrets.toml
+*.pem
+*.key
+*.cert
 
 # Python
 __pycache__/
@@ -11,6 +22,8 @@ __pycache__/
 env/
 venv/
 ENV/
+env.bak/
+venv.bak/
 build/
 develop-eggs/
 dist/
@@ -23,9 +36,19 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
 # IDE
 .vscode/
@@ -33,7 +56,41 @@ wheels/
 *.swp
 *.swo
 *~
+.spyderproject
+.spyproject
+.ropeproject
+
+# Jupyter Notebook
+.ipynb_checkpoints
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*~.nib
+
+# Temporary files
+*.tmp
+temp/
+tmp/
