@@ -109,11 +109,18 @@ def validate_email(email):
     return re.match(pattern, email) is not None
 
 def validate_url(url):
-    """Validate URL format"""
+    """Validate URL format - accepts most common URL formats"""
     if not url:
         return True  # URL is optional
-    pattern = r'^https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$'
-    return re.match(pattern, url) is not None
+    # Simple validation - just check if it looks like a URL
+    url = url.strip()
+    # Accept if starts with http:// or https://
+    if url.startswith('http://') or url.startswith('https://'):
+        return True
+    # Accept if it looks like a domain (contains a dot)
+    if '.' in url and ' ' not in url:
+        return True
+    return False
 
 def check_rate_limit():
     """Check if user has exceeded submission rate limit"""
